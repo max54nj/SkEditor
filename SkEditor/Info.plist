@@ -32,5 +32,32 @@
         <string>10.14</string>
         <key>NSPrincipalClass</key>
         <string>NSApplication</string>
+        <key>CFBundleDocumentTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleTypeName</key>
+                <string>SK File</string>
+                <key>CFBundleTypeExtensions</key>
+                <array>
+                    <string>sk</string>
+                </array>
+                <key>CFBundleTypeRole</key>
+                <string>Editor</string>
+                <key>LSHandlerRank</key>
+                <string>Default</string>  
+            </dict>
+            <dict>
+                <key>CFBundleTypeName</key>
+                <string>Any File</string>
+                <key>CFBundleTypeExtensions</key>
+                <array>
+                    <string>*</string>
+                </array>
+                <key>CFBundleTypeRole</key>
+                <string>Editor</string>
+                <key>LSHandlerRank</key>
+                <string>Alternate</string>
+            </dict>
+        </array>
     </dict>
 </plist>
