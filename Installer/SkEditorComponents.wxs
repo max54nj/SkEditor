@@ -26,6 +26,20 @@
 						  WorkingDirectory="INSTALLFOLDER"
 						  Icon="SkEditorIcon.exe" />
 			</Component>
+			
+			<Component Id="ApplicationExplorerActions"  Guid="{918b3e2b-0a88-4e53-ae65-cd1d0867313a}">
+				<RegistryKey Root="HKCR" Key="*\shell\Open with SkEditor">
+					<RegistryValue Type="string" Value="Open with SkEditor" />
+					<RegistryValue Type="string" Name="Icon" Value="C:\Program Files\SkEditor\SkEditor.exe" />
+					<RegistryKey Key="command">
+						<RegistryValue Type="string" Value="&quot;C:\Program Files\SkEditor\SkEditor.exe&quot; &quot;%1&quot;" />
+					</RegistryKey>
+				</RegistryKey>
+				
+				<RegistryKey Root="HKCR" Key="Applications\SkEditor.exe\shell\open\command">
+					<RegistryValue Type="string" Value="&quot;C:\Program Files\SkEditor\SkEditor.exe&quot; &quot;%1&quot;" />
+				</RegistryKey>
+			</Component>
 		</ComponentGroup>
 
 		<Icon Id="SkEditorIcon.exe" SourceFile="Assets/SkEditor.ico"/>
