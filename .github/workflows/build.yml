@@ -87,6 +87,14 @@ jobs:
     needs: build-linux
 
     steps:
+    - name: 📝 | Checkout repository
+      uses: actions/checkout@v2
+
+    - name: 📌 | Extract version from .csproj
+      run: |
+        VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" SkEditor/SkEditor.csproj)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+    
     - name: 📥 | Download build artifact
       uses: actions/download-artifact@v4
       with:
@@ -136,14 +144,6 @@ jobs:
         update-desktop-database || true
         update-mime-database /usr/share/mime || true' > postinst.sh
         chmod +x postinst.sh
-
-    - name: 📝 | Checkout repository
-      uses: actions/checkout@v2
-
-    - name: 📌 | Extract version from .csproj
-      run: |
-        VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" SkEditor/SkEditor.csproj)
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: 💎 | Install FPM
       run: sudo gem install --no-document fpm
