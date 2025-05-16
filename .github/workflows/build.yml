@@ -100,11 +100,8 @@ jobs:
         mkdir -p package-root/usr/share/applications
         mkdir -p package-root/usr/share/icons/hicolor/256x256/apps
         mkdir -p package-root/usr/share/mime/packages
-
-        ls -a
-
+        
         tar -xzf artifacts/SkEditor.tar.gz -C .
-        ls -R .
         cp -r SkEditorFilesL/x64/* package-root/opt/skeditor/
 
         echo '#!/bin/bash
@@ -139,6 +136,9 @@ jobs:
         update-desktop-database || true
         update-mime-database /usr/share/mime || true' > postinst.sh
         chmod +x postinst.sh
+
+    - name: 📝 | Checkout repository
+      uses: actions/checkout@v2
 
     - name: 📌 | Extract version from .csproj
       run: |
