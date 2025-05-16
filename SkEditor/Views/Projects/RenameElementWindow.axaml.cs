@@ -1,6 +1,7 @@
 ﻿using Avalonia.Input;
 using Avalonia.Interactivity;
 using FluentAvalonia.UI.Windowing;
+using SkEditor.API;
 using SkEditor.Utilities;
 using SkEditor.Utilities.Projects.Elements;
 using SkEditor.Utilities.Styling;
@@ -46,7 +47,7 @@ public partial class RenameElementWindow : AppWindow
             return;
         }
 
-        Element.RenameElement(NameBox.Text);
+        Element.RenameElement(input);
         Close();
     }
 
@@ -54,4 +55,6 @@ public partial class RenameElementWindow : AppWindow
     {
         Close();
     }
+    
+    
 }

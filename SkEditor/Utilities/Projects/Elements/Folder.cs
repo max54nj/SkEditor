@@ -16,7 +16,7 @@ using static SkEditor.Controls.Sidebar.ExplorerSidebarPanel;
 
 namespace SkEditor.Utilities.Projects.Elements;
 
-public class Folder : StorageElement
+public partial class Folder : StorageElement
 {
     public Folder(string folder, Folder? parent = null)
     {
@@ -73,12 +73,12 @@ public class Folder : StorageElement
                 Directory
                     .GetDirectories(StorageFolderPath)
                     .ToList()
-                    .ForEach(x => Children.Add(new Folder(x, this)));
+                    .ForEach(x => Children?.Add(new Folder(x, this)));
 
                 Directory
                     .GetFiles(StorageFolderPath)
                     .ToList()
-                    .ForEach(x => Children.Add(new File(x, this)));
+                    .ForEach(x => Children?.Add(new File(x, this)));
             })
         );
     }
@@ -122,13 +122,16 @@ public class Folder : StorageElement
         ExplorerPanel? panel =
             Registries.SidebarPanels.FirstOrDefault(x => x is ExplorerPanel) as ExplorerPanel;
 
-        StackPanel noFolderMessage = panel.Panel.NoFolderMessage;
+        StackPanel? noFolderMessage = panel?.Panel.NoFolderMessage;
+        if (noFolderMessage is null) return;
         noFolderMessage.IsVisible = projectRootFolder == null;
     }
 
     public override void RenameElement(string newName, bool move = true)
     {
-        string newPath = Path.Combine(Parent.StorageFolderPath, newName);
+        Folder? parent = Parent;
+        if (parent is null) return;
+        string newPath = Path.Combine(parent.StorageFolderPath, newName);
 
         if (move)
         {
@@ -152,7 +155,12 @@ public class Folder : StorageElement
             return Translation.Get("ProjectRenameErrorParentNull");
         }
 
-        StorageElement? folder = Parent.Children.FirstOrDefault(x => x.Name == input);
+        if (!ValidFolderNameRegex().IsMatch(input))
+        {
+            return Translation.Get("ProjectRenameErrorNameInvalid");
+        }
+        
+        StorageElement? folder = Parent?.Children?.FirstOrDefault(x => x.Name == input);
 
         return folder is not null ? Translation.Get("ProjectErrorNameExists") : null;
     }
@@ -163,18 +171,18 @@ public class Folder : StorageElement
         {
             return Translation.Get("ProjectCreateErrorNameEmpty");
         }
-
-        if (Children.Any(x => x.Name == input))
+        
+        if (!ValidFolderNameRegex().IsMatch(input))
         {
-            return Translation.Get("ProjectErrorNameExists");
+            return Translation.Get("ProjectRenameErrorNameInvalid");
         }
 
-        return null;
+        return Children?.Any(x => x.Name == input) == true ? Translation.Get("ProjectErrorNameExists") : null;
     }
 
     public override void HandleClick()
     {
-        if (Children.Count > 0)
+        if (Children?.Count > 0)
         {
             IsExpanded = !IsExpanded;
         }
@@ -183,14 +191,17 @@ public class Folder : StorageElement
     public void CopyAbsolutePath()
     {
         SkEditorAPI
-            .Windows.GetMainWindow()
-            .Clipboard.SetTextAsync(Path.GetFullPath(StorageFolderPath));
+            .Windows.GetMainWindow()?
+            .Clipboard?.SetTextAsync(Path.GetFullPath(StorageFolderPath));
     }
 
     public void CopyPath()
     {
-        string path = StorageFolderPath.Replace(ProjectOpener.ProjectRootFolder.StorageFolderPath, "");
-        SkEditorAPI.Windows.GetMainWindow().Clipboard.SetTextAsync(path);
+        Folder? root = ProjectOpener.ProjectRootFolder;
+        if (root is null) return;
+        
+        string path = StorageFolderPath.Replace(root.StorageFolderPath, "");
+        SkEditorAPI.Windows.GetMainWindow()?.Clipboard?.SetTextAsync(path);
     }
 
     public async Task CreateNewElement(bool file)
@@ -206,7 +217,7 @@ public class Folder : StorageElement
         FileHandler.OpenFile(path);
 
         File element = new(path, this);
-        Children.Add(element);
+        Children?.Add(element);
         Sort(this);
     }
 
@@ -216,7 +227,7 @@ public class Folder : StorageElement
         Directory.CreateDirectory(path);
 
         Folder element = new(path, this);
-        Children.Add(element);
+        Children?.Add(element);
         Sort(this);
     }
 
@@ -225,6 +236,10 @@ public class Folder : StorageElement
         if (StorageFolderPath == path)
         {
             return this;
+        }
+        if (Children is null)
+        {
+            return null;
         }
 
         foreach (StorageElement child in Children)
@@ -249,4 +264,7 @@ public class Folder : StorageElement
 
         return null;
     }
+    
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(\.)?(?!\.{1,2}$)(?!.*[\\/:*?""""<>|])(?!^[. ])(?!.*[. ]$)[a-zA-Z0-9][\w\-. ]{0,254}$")]
+    private static partial System.Text.RegularExpressions.Regex ValidFolderNameRegex();
 }

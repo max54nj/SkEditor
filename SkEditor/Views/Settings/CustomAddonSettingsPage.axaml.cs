@@ -58,23 +58,47 @@ public partial class CustomAddonSettingsPage : UserControl
                 Description = setting.Description
             };
 
-            object? value = setting.Type.IsSelfManaged ? null : AddonSettingsManager.GetValue(setting);
-            Control control = setting.Type.CreateControl(value,
+            object? initialValueForControl;
+            object? capturedValueForLambda;
+
+            if (setting.Type.IsSelfManaged)
+            {
+                initialValueForControl = setting.DefaultValue;
+                capturedValueForLambda = null;
+            }
+            else
+            {
+                initialValueForControl = AddonSettingsManager.GetValue(setting);
+                capturedValueForLambda = initialValueForControl;
+            }
+
+            if (initialValueForControl == null)
+            {
+                initialValueForControl = setting.DefaultValue;
+                capturedValueForLambda = initialValueForControl;
+            }
+
+            Control control = setting.Type.CreateControl(initialValueForControl,
                 newValue =>
                 {
-                    if (setting.Type.IsSelfManaged)
+                    if (!setting.Type.IsSelfManaged)
                     {
-                        setting.OnChanged?.Invoke(newValue);
-                        return;
+                        if (Equals(capturedValueForLambda, newValue)) return;
+
+                        SkEditorAPI.Events.AddonSettingChanged(setting,
+                            capturedValueForLambda ?? setting.DefaultValue);
+
+                        AddonSettingsManager.SetValue(setting, newValue ?? setting.DefaultValue);
                     }
 
-                    SkEditorAPI.Events.AddonSettingChanged(setting, value);
-
-                    value = newValue;
-                    AddonSettingsManager.SetValue(setting, newValue);
-                    setting.OnChanged?.Invoke(newValue);
+                    setting.OnChanged?.Invoke(newValue ?? setting.DefaultValue);
                 });
-            expander.Footer = control;
+
+            if (control != null)
+            {
+                expander.Footer = control;
+            }
+
             setting.Type.SetupExpander(expander, setting);
             ItemStackPanel.Children.Add(expander);
         }
