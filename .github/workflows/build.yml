@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - explorer-context-actions
 
 jobs:
   build-macos:
