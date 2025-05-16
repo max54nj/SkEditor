@@ -81,3 +81,84 @@ jobs:
         name: Linux (multiarch)
         path: SkEditor.tar.gz
     
+  package-linux:
+    runs-on: ubuntu-latest
+    needs: build-linux
+
+    steps:
+    - name: 📥 | Download build artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Linux (multiarch)
+        path: artifacts
+
+    - name: 📦 | Extract and prepare package
+      run: |
+        mkdir -p package-root/opt/skeditor
+        mkdir -p package-root/usr/local/bin
+        mkdir -p package-root/usr/share/applications
+        mkdir -p package-root/usr/share/icons/hicolor/256x256/apps
+        mkdir -p package-root/usr/share/mime/packages
+
+        tar -xzf artifacts/SkEditor.tar.gz
+        cp -r SkEditorFilesL/x64/* package-root/opt/skeditor/
+
+        echo '#!/bin/bash
+        /opt/skeditor/SkEditor "$@"' > package-root/usr/local/bin/skeditor
+        chmod +x package-root/usr/local/bin/skeditor
+
+        cat <<EOF > package-root/usr/share/applications/skeditor.desktop
+        [Desktop Entry]
+        Name=SkEditor
+        Exec=/opt/skeditor/SkEditor %F
+        Icon=skeditor
+        Type=Application
+        Categories=Utility;TextEditor;
+        MimeType=application/x-sk;image/png;text/plain;
+        StartupNotify=true
+        EOF
+
+        wget -q "https://raw.githubusercontent.com/max54nj/SkEditor/refs/heads/main/SkEditor.png" -O package-root/usr/share/icons/hicolor/256x256/apps/skeditor.png
+
+        cat <<EOF > package-root/usr/share/mime/packages/skeditor.xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+          <mime-type type="application/x-sk">
+            <comment>SkEditor Script File</comment>
+            <glob pattern="*.sk"/>
+          </mime-type>
+        </mime-info>
+        EOF
+
+        echo '#!/bin/bash
+        set -e
+        update-desktop-database || true
+        update-mime-database /usr/share/mime || true' > postinst.sh
+        chmod +x postinst.sh
+
+    - name: 📌 | Extract version from .csproj
+      run: |
+        VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" SkEditor/SkEditor.csproj)
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: 💎 | Install FPM
+      run: sudo gem install --no-document fpm
+
+    - name: 🏗️ | Build .deb with FPM
+      run: |
+        fpm -s dir -t deb \
+          -n skeditor \
+          -v "$VERSION" \
+          -a amd64 \
+          --prefix=/ \
+          --after-install postinst.sh \
+          --description "SkEditor - A powerful cross-platform editor for Skript" \
+          --url "https://github.com/SkEditorTeam/SkEditor" \
+          --license "MIT" \
+          -C package-root
+
+    - name: 📤 | Upload .deb as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SkEditor Debian Package
+        path: ./skeditor_${{ env.VERSION }}_amd64.deb
