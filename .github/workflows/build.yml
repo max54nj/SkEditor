@@ -127,7 +127,8 @@ jobs:
         StartupNotify=true
         EOF
 
-        wget -q "https://raw.githubusercontent.com/max54nj/SkEditor/refs/heads/main/SkEditor.png" -O package-root/usr/share/icons/hicolor/256x256/apps/skeditor.png
+        cp SkEditor/SkEditor.png package-root/usr/share/icons/hicolor/256x256/apps/skeditor.png
+
 
         cat <<EOF > package-root/usr/share/mime/packages/skeditor.xml
         <?xml version="1.0" encoding="UTF-8"?>
