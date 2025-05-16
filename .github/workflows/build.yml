@@ -127,7 +127,7 @@ jobs:
         StartupNotify=true
         EOF
 
-        cp SkEditor/SkEditor.png package-root/usr/share/icons/hicolor/256x256/apps/skeditor.png
+        cp SkEditor.png package-root/usr/share/icons/hicolor/256x256/apps/skeditor.png
 
 
         cat <<EOF > package-root/usr/share/mime/packages/skeditor.xml
