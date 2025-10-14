@@ -68,4 +68,19 @@ public interface IAddons
     /// </summary>
     /// <returns>The self addon of SkEditor.</returns>
     public SkEditorSelfAddon GetSelfAddon();
+
+    /// <summary>
+    ///     Check if an addon with the specified identifier is available (installed and enabled).
+    /// </summary>
+    /// <param name="addonIdentifier">The identifier of the addon to check.</param>
+    /// <returns>True if the addon is available, false otherwise.</returns>
+    public bool IsAddonAvailable(string addonIdentifier);
+
+    /// <summary>
+    ///     Check if an addon with the specified identifier is available and matches the version range.
+    /// </summary>
+    /// <param name="addonIdentifier">The identifier of the addon to check.</param>
+    /// <param name="versionRange">The version range to check (npm-style: ^1.2.3, >=1.0.0, etc.).</param>
+    /// <returns>True if the addon is available and matches the version range, false otherwise.</returns>
+    public bool IsAddonAvailable(string addonIdentifier, string versionRange);
 }

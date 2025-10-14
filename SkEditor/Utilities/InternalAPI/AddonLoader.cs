@@ -89,19 +89,132 @@ public static class AddonLoader
             .Where(File.Exists)
             .ToList();
 
-        IEnumerable<Task> loadTasks = dllFiles.Select(dllFile =>
+        // First, load all addons into metadata without enabling them
+        List<AddonMeta> loadedAddons = [];
+        foreach (string dllFile in dllFiles)
         {
             string? dir = Path.GetDirectoryName(dllFile);
             if (dir != null)
             {
-                return LoadAddonFromFile(dir);
+                AddonMeta? meta = await LoadAddonFromFileWithoutEnabling(dir);
+                if (meta != null)
+                {
+                    loadedAddons.Add(meta);
+                }
             }
+            else
+            {
+                SkEditorAPI.Logs.Error($"Failed to load addon from \"{dllFile}\": No directory found.");
+            }
+        }
 
-            SkEditorAPI.Logs.Error($"Failed to load addon from \"{dllFile}\": No directory found.");
-            return Task.CompletedTask;
-        });
+        // Validate dependencies for all addons
+        foreach (AddonMeta meta in loadedAddons)
+        {
+            AddonDependencyResolver.ValidateDependencies(meta, Addons);
+        }
 
-        await Task.WhenAll(loadTasks);
+        // Resolve dependencies and get loading order
+        List<AddonMeta>? sortedAddons = AddonDependencyResolver.ResolveDependencies(loadedAddons);
+
+        if (sortedAddons == null)
+        {
+            SkEditorAPI.Logs.Error("Circular dependency detected. Some addons cannot be loaded.");
+            return;
+        }
+
+        // Enable addons in dependency order
+        foreach (AddonMeta meta in sortedAddons)
+        {
+            bool shouldBeDisabled = _metaCache.TryGetValue(meta.Addon.Identifier, out JToken? enabledToken) &&
+                                    enabledToken?.Value<bool>() == false;
+
+            if (!shouldBeDisabled && !meta.HasCriticalErrors)
+            {
+                await EnableAddon(meta.Addon);
+            }
+        }
+    }
+
+    private static async Task<AddonMeta?> LoadAddonFromFileWithoutEnabling(string addonFolder)
+    {
+        string dllFile = Path.Combine(addonFolder, Path.GetFileName(addonFolder) + ".dll");
+        if (!File.Exists(dllFile))
+        {
+            SkEditorAPI.Logs.Error($"Failed to load addon from \"{addonFolder}\": No dll file found.");
+            return null;
+        }
+
+        AddonLoadContext loadContext = new(Path.GetFullPath(dllFile));
+        List<IAddon?> addonInstances;
+        try
+        {
+            await using FileStream stream = File.OpenRead(dllFile);
+            addonInstances = loadContext.LoadFromStream(stream)
+                .GetTypes()
+                .Where(p => typeof(IAddon).IsAssignableFrom(p) && p is { IsClass: true, IsAbstract: false })
+                .Select(addonType => (IAddon?)Activator.CreateInstance(addonType))
+                .Where(addonInstance => addonInstance != null)
+                .ToList();
+        }
+        catch (Exception e)
+        {
+            string name = Path.GetFileNameWithoutExtension(dllFile);
+
+            SkEditorAPI.Logs.Error($"Failed to load addon from \"{dllFile}\": {e.Message}\n{e.StackTrace}");
+
+            await SkEditorAPI.Windows.ShowError(
+                $"Failed to load addon '{name}'.\n\n" +
+                "Check the application logs for detailed error information. " +
+                "Visit the Marketplace to see if an update is available for this addon.");
+            return null;
+        }
+
+        switch (addonInstances.Count)
+        {
+            case 0:
+                SkEditorAPI.Logs.Warning(
+                    $"Failed to load addon from \"{dllFile}\": No addon class found. No worries if it's a library.");
+                return null;
+            case > 1:
+                SkEditorAPI.Logs.Warning($"Failed to load addon from \"{dllFile}\": Multiple addon classes found.");
+                return null;
+        }
+
+        IAddon? addonInstance = addonInstances[0];
+
+        if (addonInstance is null)
+        {
+            SkEditorAPI.Logs.Warning(
+                $"Failed to load addon from \"{dllFile}\": The addon class is null. No worries if it's a library.");
+            return null;
+        }
+
+        if (addonInstance is SkEditorSelfAddon)
+        {
+            SkEditorAPI.Logs.Warning(
+                $"Failed to load addon from \"{dllFile}\": The SkEditor Core can't be loaded as an addon.");
+            return null;
+        }
+
+        if (Addons.Any(m => m.Addon.Identifier == addonInstance.Identifier))
+        {
+            SkEditorAPI.Logs.Warning(
+                $"Failed to load addon from \"{dllFile}\": An addon with the identifier \"{addonInstance.Identifier}\" is already loaded.");
+            return null;
+        }
+
+        AddonMeta addonMeta = new()
+        {
+            Addon = addonInstance,
+            State = IAddons.AddonState.Installed,
+            DllFilePath = dllFile,
+            Errors = [],
+            LoadContext = loadContext
+        };
+
+        Addons.Add(addonMeta);
+        return addonMeta;
     }
 
     public static async Task LoadAddonFromFile(string addonFolder)
@@ -261,6 +374,12 @@ public static class AddonLoader
             return false;
         }
 
+        // Check that all required addon dependencies are enabled
+        if (!AreAddonDependenciesEnabled(addonMeta))
+        {
+            return false;
+        }
+
         if (!await LocalDependencyManager.CheckAddonDependencies(addonMeta))
         {
             return false;
@@ -278,6 +397,53 @@ public static class AddonLoader
         });
         addonMeta.State = IAddons.AddonState.Disabled;
         return false;
+    }
+
+    private static bool AreAddonDependenciesEnabled(AddonMeta addonMeta)
+    {
+        List<AddonDependency> addonDeps = addonMeta.Addon.GetDependencies()
+            .Where(x => x is AddonDependency)
+            .Cast<AddonDependency>()
+            .ToList();
+
+        foreach (AddonDependency dep in addonDeps)
+        {
+            if (!dep.IsRequired)
+            {
+                continue; // Optional dependencies don't need to be enabled
+            }
+
+            AddonMeta? dependency = Addons.FirstOrDefault(a => a.Addon.Identifier == dep.AddonIdentifier);
+
+            if (dependency == null)
+            {
+                SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" which is not installed.");
+                addonMeta.Errors.Add(LoadingErrors.MissingAddonDependency(dep.AddonIdentifier));
+                return false;
+            }
+
+            if (dependency.State != IAddons.AddonState.Enabled)
+            {
+                SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" to be enabled, but it is not.");
+                addonMeta.Errors.Add(LoadingErrors.DependencyNotEnabled(dep.AddonIdentifier));
+                return false;
+            }
+
+            // Verify version compatibility
+            if (!string.IsNullOrWhiteSpace(dep.VersionRange))
+            {
+                string dependencyVersion = dependency.Addon.Version;
+                if (!VersionParser.Satisfies(dependencyVersion, dep.VersionRange))
+                {
+                    SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" version {dep.VersionRange}, but version {dependencyVersion} is installed.");
+                    addonMeta.Errors.Add(LoadingErrors.IncompatibleAddonVersion(
+                        dep.AddonIdentifier, dep.VersionRange, dependencyVersion));
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     public static async Task<bool> EnableAddon(IAddon addon)
@@ -327,6 +493,45 @@ public static class AddonLoader
         if (meta.State == IAddons.AddonState.Disabled)
         {
             return;
+        }
+
+        // Check if any enabled addons depend on this addon
+        List<AddonMeta> dependents = AddonDependencyResolver.GetDependents(meta, Addons)
+            .Where(d => d.State == IAddons.AddonState.Enabled)
+            .ToList();
+
+        if (dependents.Count > 0)
+        {
+            string dependentNames = string.Join(", ", dependents.Select(d => d.Addon.Name));
+            ContentDialogResult result = await SkEditorAPI.Windows.ShowDialog(
+                "Disable dependent addons?",
+                $"The following addons depend on '{addon.Name}':\n\n{dependentNames}\n\n" +
+                "Disabling this addon will also disable these addons. Do you want to continue?",
+                Symbol.AlertUrgent,
+                "Cancel",
+                "Disable Anyway",
+                false);
+
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            // Disable all dependent addons first
+            foreach (AddonMeta dependent in dependents)
+            {
+                try
+                {
+                    dependent.Addon.OnDisable();
+                    dependent.State = IAddons.AddonState.Disabled;
+                    Registries.Unload(dependent.Addon);
+                }
+                catch (Exception e)
+                {
+                    SkEditorAPI.Logs.Error($"Failed to disable dependent addon \"{dependent.Addon.Name}\": {e.Message}");
+                    dependent.State = IAddons.AddonState.Disabled;
+                }
+            }
         }
 
         try

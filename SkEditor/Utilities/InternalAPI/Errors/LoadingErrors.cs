@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using NuGet.Versioning;
 using SkEditor.API;
 
@@ -31,9 +32,24 @@ public static class LoadingErrors
         return new MissingAddonDependencyError(addonIdentifier);
     }
 
+    public static IAddonLoadingError DependencyNotEnabled(string addonIdentifier)
+    {
+        return new DependencyNotEnabledError(addonIdentifier);
+    }
+
     public static IAddonLoadingError FailedToLoadDependency(string dependencyName, string message)
     {
         return new FailedToLoadDependencyError(dependencyName, message);
+    }
+
+    public static IAddonLoadingError IncompatibleAddonVersion(string addonIdentifier, string requiredVersion, string foundVersion)
+    {
+        return new IncompatibleAddonVersionError(addonIdentifier, requiredVersion, foundVersion);
+    }
+
+    public static IAddonLoadingError CircularDependency(List<string> dependencyChain)
+    {
+        return new CircularDependencyError(dependencyChain);
     }
 
 
@@ -65,6 +81,12 @@ public static class LoadingErrors
         public string Message => "The addon requires the addon '" + addonIdentifier + "' to be loaded.";
     }
 
+    private class DependencyNotEnabledError(string addonIdentifier) : IAddonLoadingError
+    {
+        public bool IsCritical => true;
+        public string Message => "The addon requires '" + addonIdentifier + "' to be enabled, but it is currently disabled.";
+    }
+
     private class OutdatedDependencyError(string dependencyName, NuGetVersion target, NuGetVersion found)
         : IAddonLoadingError
     {
@@ -78,5 +100,17 @@ public static class LoadingErrors
     {
         public bool IsCritical => true;
         public string Message => "Failed to load the dependency '" + dependencyName + "': " + message;
+    }
+
+    private class IncompatibleAddonVersionError(string addonIdentifier, string requiredVersion, string foundVersion) : IAddonLoadingError
+    {
+        public bool IsCritical => true;
+        public string Message => $"The addon requires '{addonIdentifier}' version {requiredVersion}, but version {foundVersion} is installed.";
+    }
+
+    private class CircularDependencyError(List<string> dependencyChain) : IAddonLoadingError
+    {
+        public bool IsCritical => true;
+        public string Message => "Circular dependency detected: " + string.Join(" -> ", dependencyChain) + " -> " + dependencyChain[0];
     }
 }

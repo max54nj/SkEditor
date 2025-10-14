@@ -61,4 +61,21 @@ public class Addons : IAddons
     {
         return AddonLoader.GetCoreAddon();
     }
+
+    public bool IsAddonAvailable(string addonIdentifier)
+    {
+        IAddon? addon = GetAddon(addonIdentifier);
+        return addon != null && GetAddonState(addon) == IAddons.AddonState.Enabled;
+    }
+
+    public bool IsAddonAvailable(string addonIdentifier, string versionRange)
+    {
+        IAddon? addon = GetAddon(addonIdentifier);
+        if (addon == null || GetAddonState(addon) != IAddons.AddonState.Enabled)
+        {
+            return false;
+        }
+
+        return VersionParser.Satisfies(addon.Version, versionRange);
+    }
 }
