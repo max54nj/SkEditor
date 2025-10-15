@@ -78,6 +78,11 @@ public static class AddonLoader
         }
 
         _metaCache = JObject.Parse(File.ReadAllText(metaFile));
+        SkEditorAPI.Logs.Debug($"Loaded meta.json with {_metaCache.Count} entries:");
+        foreach (var kvp in _metaCache)
+        {
+            SkEditorAPI.Logs.Debug($"  - {kvp.Key}: {kvp.Value}");
+        }
     }
 
     private static async Task LoadAddonsFromFiles()
@@ -108,10 +113,10 @@ public static class AddonLoader
             }
         }
 
-        // Validate dependencies for all addons
+        // Validate that all addon dependencies exist (but don't check if they're enabled yet)
         foreach (AddonMeta meta in loadedAddons)
         {
-            AddonDependencyResolver.ValidateDependencies(meta, Addons);
+            ValidateAddonDependenciesExist(meta, Addons);
         }
 
         // Resolve dependencies and get loading order
@@ -123,15 +128,69 @@ public static class AddonLoader
             return;
         }
 
-        // Enable addons in dependency order
+        // Enable addons in dependency order (without saving meta after each one)
         foreach (AddonMeta meta in sortedAddons)
         {
-            bool shouldBeDisabled = _metaCache.TryGetValue(meta.Addon.Identifier, out JToken? enabledToken) &&
-                                    enabledToken?.Value<bool>() == false;
+            // Check if addon should be enabled based on meta.json
+            // Default: enable if not explicitly set to false in meta.json
+            bool isExplicitlyDisabled = _metaCache.TryGetValue(meta.Addon.Identifier, out JToken? enabledToken) &&
+                                        enabledToken.Type == JTokenType.Boolean &&
+                                        enabledToken.Value<bool>() == false;
 
-            if (!shouldBeDisabled && !meta.HasCriticalErrors)
+            SkEditorAPI.Logs.Debug($"Loading addon '{meta.Addon.Name}' (ID: '{meta.Addon.Identifier}'): ExplicitlyDisabled={isExplicitlyDisabled}, HasCriticalErrors={meta.HasCriticalErrors}, TokenValue={enabledToken?.ToString() ?? "null"}");
+
+            if (!isExplicitlyDisabled && !meta.HasCriticalErrors)
             {
-                await EnableAddon(meta.Addon);
+                bool enabled = await EnableAddon(meta.Addon, saveMetaImmediately: false);
+                SkEditorAPI.Logs.Debug($"Addon '{meta.Addon.Name}' enable result: {enabled}, State: {meta.State}");
+            }
+            else
+            {
+                SkEditorAPI.Logs.Debug($"Skipping addon '{meta.Addon.Name}' - ExplicitlyDisabled={isExplicitlyDisabled}, HasCriticalErrors={meta.HasCriticalErrors}");
+            }
+        }
+
+        // Save meta once after all addons have been processed
+        await SaveMeta();
+    }
+
+    /// <summary>
+    ///     Validate that all required addon dependencies exist (but don't check if they're enabled).
+    ///     This is used during the initial loading phase before any addons are enabled.
+    /// </summary>
+    private static void ValidateAddonDependenciesExist(AddonMeta addonMeta, List<AddonMeta> allAddons)
+    {
+        List<AddonDependency> addonDeps = addonMeta.Addon.GetDependencies()
+            .Where(x => x is AddonDependency)
+            .Cast<AddonDependency>()
+            .ToList();
+
+        foreach (AddonDependency dep in addonDeps)
+        {
+            if (!dep.IsRequired)
+            {
+                continue; // Optional dependencies don't need to exist
+            }
+
+            AddonMeta? dependency = allAddons.FirstOrDefault(a => a.Addon.Identifier == dep.AddonIdentifier);
+
+            if (dependency == null)
+            {
+                SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" which is not installed.");
+                addonMeta.Errors.Add(LoadingErrors.MissingAddonDependency(dep.AddonIdentifier));
+                continue;
+            }
+
+            // Check version compatibility
+            if (!string.IsNullOrWhiteSpace(dep.VersionRange))
+            {
+                string dependencyVersion = dependency.Addon.Version;
+                if (!VersionParser.Satisfies(dependencyVersion, dep.VersionRange))
+                {
+                    SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" version {dep.VersionRange}, but version {dependencyVersion} is installed.");
+                    addonMeta.Errors.Add(LoadingErrors.IncompatibleAddonVersion(
+                        dep.AddonIdentifier, dep.VersionRange, dependencyVersion));
+                }
             }
         }
     }
@@ -156,6 +215,9 @@ public static class AddonLoader
                 .Select(addonType => (IAddon?)Activator.CreateInstance(addonType))
                 .Where(addonInstance => addonInstance != null)
                 .ToList();
+
+            // Register the load context so other addons can resolve assemblies from this addon
+            loadContext.Register();
         }
         catch (Exception e)
         {
@@ -237,13 +299,16 @@ public static class AddonLoader
                 .Select(addonType => (IAddon?)Activator.CreateInstance(addonType))
                 .Where(addonInstance => addonInstance != null)
                 .ToList();
+
+            // Register the load context so other addons can resolve assemblies from this addon
+            loadContext.Register();
         }
         catch (Exception e)
         {
             string name = Path.GetFileNameWithoutExtension(dllFile);
-            
+
             SkEditorAPI.Logs.Error($"Failed to load addon from \"{dllFile}\": {e.Message}\n{e.StackTrace}");
-            
+
             await SkEditorAPI.Windows.ShowError(
                 $"Failed to load addon '{name}'.\n\n" +
                 "Check the application logs for detailed error information. " +
@@ -261,9 +326,9 @@ public static class AddonLoader
                 SkEditorAPI.Logs.Warning($"Failed to load addon from \"{dllFile}\": Multiple addon classes found.");
                 return;
         }
-        
+
         IAddon? addonInstance = addonInstances[0];
-        
+
         if (addonInstance is null)
         {
             SkEditorAPI.Logs.Warning(
@@ -317,7 +382,7 @@ public static class AddonLoader
         {
             addon = (IAddon?)Activator.CreateInstance(addonClass);
         }
-        
+
         if (addon == null)
         {
             SkEditorAPI.Logs.Error($"Failed to load addon \"{addonClass.Name}\": The addon class is null.");
@@ -406,10 +471,16 @@ public static class AddonLoader
             .Cast<AddonDependency>()
             .ToList();
 
+        if (addonDeps.Count > 0)
+        {
+            SkEditorAPI.Logs.Debug($"Checking {addonDeps.Count} addon dependencies for '{addonMeta.Addon.Name}'");
+        }
+
         foreach (AddonDependency dep in addonDeps)
         {
             if (!dep.IsRequired)
             {
+                SkEditorAPI.Logs.Debug($"  - Dependency '{dep.AddonIdentifier}' is optional, skipping");
                 continue; // Optional dependencies don't need to be enabled
             }
 
@@ -422,9 +493,11 @@ public static class AddonLoader
                 return false;
             }
 
+            SkEditorAPI.Logs.Debug($"  - Dependency '{dep.AddonIdentifier}' found with state: {dependency.State}");
+
             if (dependency.State != IAddons.AddonState.Enabled)
             {
-                SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" to be enabled, but it is not.");
+                SkEditorAPI.Logs.Error($"Addon \"{addonMeta.Addon.Name}\" requires addon \"{dep.AddonIdentifier}\" to be enabled, but it is {dependency.State}.");
                 addonMeta.Errors.Add(LoadingErrors.DependencyNotEnabled(dep.AddonIdentifier));
                 return false;
             }
@@ -440,6 +513,8 @@ public static class AddonLoader
                         dep.AddonIdentifier, dep.VersionRange, dependencyVersion));
                     return false;
                 }
+
+                SkEditorAPI.Logs.Debug($"  - Version {dependencyVersion} satisfies requirement {dep.VersionRange}");
             }
         }
 
@@ -447,6 +522,11 @@ public static class AddonLoader
     }
 
     public static async Task<bool> EnableAddon(IAddon addon)
+    {
+        return await EnableAddon(addon, saveMetaImmediately: true);
+    }
+
+    private static async Task<bool> EnableAddon(IAddon addon, bool saveMetaImmediately)
     {
         AddonMeta meta = Addons.First(m => m.Addon == addon);
         if (meta.State == IAddons.AddonState.Enabled)
@@ -468,7 +548,11 @@ public static class AddonLoader
             await addon.OnEnableAsync();
 
             meta.State = IAddons.AddonState.Enabled;
-            await SaveMeta();
+
+            if (saveMetaImmediately)
+            {
+                await SaveMeta();
+            }
 
             _ = Dispatcher.UIThread.InvokeAsync(() => SkEditorAPI.Windows.GetMainWindow()?.ReloadUiOfAddons());
             return true;
@@ -479,7 +563,12 @@ public static class AddonLoader
             SkEditorAPI.Logs.Fatal(e);
             meta.Errors.Add(LoadingErrors.LoadingException(e));
             meta.State = IAddons.AddonState.Disabled;
-            await SaveMeta();
+
+            if (saveMetaImmediately)
+            {
+                await SaveMeta();
+            }
+
             Registries.Unload(addon);
 
             _ = Task.Run(() => SkEditorAPI.Windows.GetMainWindow()?.ReloadUiOfAddons());
@@ -577,6 +666,8 @@ public static class AddonLoader
             }
         }
 
+        // Unregister the load context before unloading
+        addonMeta.LoadContext?.Unregister();
         addonMeta.LoadContext?.Unload();
 
         string addonFile = Path.Combine(AppConfig.AppDataFolderPath, "Addons", addonMeta.Addon.Identifier,
@@ -605,7 +696,9 @@ public static class AddonLoader
     public static async Task SaveMeta()
     {
         string metaFile = Path.Combine(AppConfig.AppDataFolderPath, "Addons", "meta.json");
-        _metaCache = new JObject();
+        
+        // Update the cache with current addon states instead of rebuilding from scratch
+        // This preserves entries for addons that haven't been processed yet
         foreach (AddonMeta addonMeta in Addons)
         {
             _metaCache[addonMeta.Addon.Identifier] = addonMeta.State == IAddons.AddonState.Enabled;

@@ -17,15 +17,23 @@ public static class AddonDependencyResolver
     /// <returns>A list of addons in dependency order, or null if there are circular dependencies.</returns>
     public static List<AddonMeta>? ResolveDependencies(List<AddonMeta> addons)
     {
-        // Build dependency graph
+        // Build dependency graph (reversed: key -> addons that depend on key)
+        // This way, topological sort will process dependencies before dependents
         Dictionary<string, List<string>> graph = new();
         Dictionary<string, AddonMeta> addonMap = new();
 
+        // Initialize graph with all addon identifiers
         foreach (AddonMeta meta in addons)
         {
             string identifier = meta.Addon.Identifier;
             addonMap[identifier] = meta;
             graph[identifier] = [];
+        }
+
+        // Build the graph: for each addon, add edges FROM its dependencies TO itself
+        foreach (AddonMeta meta in addons)
+        {
+            string identifier = meta.Addon.Identifier;
 
             List<AddonDependency> addonDeps = meta.Addon.GetDependencies()
                 .Where(x => x is AddonDependency)
@@ -34,7 +42,13 @@ public static class AddonDependencyResolver
 
             foreach (AddonDependency dep in addonDeps)
             {
-                graph[identifier].Add(dep.AddonIdentifier);
+                // Add edge: dependency -> dependent
+                // This means "identifier depends on dep.AddonIdentifier"
+                // So in the graph, dep.AddonIdentifier has an edge TO identifier
+                if (graph.ContainsKey(dep.AddonIdentifier))
+                {
+                    graph[dep.AddonIdentifier].Add(identifier);
+                }
             }
         }
 
