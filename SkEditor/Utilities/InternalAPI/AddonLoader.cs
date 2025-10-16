@@ -45,6 +45,20 @@ public static class AddonLoader
         await LoadAddonsFromFiles();
 #endif
 
+        // Check for NuGet version conflicts across all loaded addons
+        List<string> versionConflictWarnings = LocalDependencyManager.CheckForVersionConflicts(Addons);
+        if (versionConflictWarnings.Count > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(200); // Delay to ensure UI is ready
+                string warningMessage = "NuGet package version conflicts detected:\n\n" +
+                                      string.Join("\n", versionConflictWarnings) +
+                                      "\n\nThe application may not work correctly. Please check addon compatibility.";
+                await SkEditorAPI.Windows.ShowMessage("NuGet Version Conflicts", warningMessage);
+            });
+        }
+
         List<AddonMeta> addonsWithErrors = Addons.Where(addon => addon.HasErrors).ToList();
         if (addonsWithErrors.Count > 0)
         {
@@ -445,24 +459,15 @@ public static class AddonLoader
             return false;
         }
 
-        if (!await LocalDependencyManager.CheckAddonDependencies(addonMeta))
+        // Load NuGet dependencies (download, cache, and load into context)
+        if (!await LocalDependencyManager.LoadNuGetDependencies(addonMeta))
         {
             return false;
         }
 
-        if (!addonMeta.NeedsRestart)
-        {
-            return true;
-        }
-
-        _ = Task.Run(async () =>
-        {
-            await SkEditorAPI.Windows.ShowMessage("Addon needs restart",
-                $"The addon \"{addonMeta.Addon.Name}\" needs a restart to be enabled correctly.");
-        });
-        addonMeta.State = IAddons.AddonState.Disabled;
-        return false;
+        return true;
     }
+
 
     private static bool AreAddonDependenciesEnabled(AddonMeta addonMeta)
     {

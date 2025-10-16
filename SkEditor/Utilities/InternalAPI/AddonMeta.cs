@@ -10,7 +10,6 @@ public class AddonMeta
     public IAddons.AddonState State { get; set; } = IAddons.AddonState.Installed;
     public List<IAddonLoadingError> Errors { get; set; } = [];
     public string? DllFilePath { get; set; }
-    public bool NeedsRestart { get; set; }
     public AddonLoadContext LoadContext { get; set; } = null!;
 
     public bool HasErrors => Errors.Count > 0;
