@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia.Controls;
 using Newtonsoft.Json.Linq;
 
@@ -34,7 +35,10 @@ public class ComboBoxSetting(string[] items, int minWidth = 100) : ISettingType
             comboBox.Items.Add(new ComboBoxItem { Content = item, Tag = item });
         }
 
-        comboBox.SelectedItem = Items.Contains(value as string ?? string.Empty) ? value : Items[0];
+        comboBox.SelectedItem = comboBox.Items
+                                        .Cast<ComboBoxItem>()
+                                        .FirstOrDefault(item => 
+                                            item.Tag?.Equals(value) == true) ?? comboBox.Items[0];
         comboBox.SelectionChanged += (_, _) => onChanged((comboBox.SelectedItem as ComboBoxItem)?.Tag);
 
         return comboBox;
